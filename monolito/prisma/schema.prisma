@@ -1,13 +1,63 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Get a free hosted Postgres database in seconds: `npx create-db`
-
+// 1. Configuración de Prisma y la Base de Datos
 generator client {
-  provider = "prisma-client"
-  output   = "../generated/prisma"
+  provider = "prisma-client-js"
 }
 
 datasource db {
   provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==========================================
+// 2. MODELOS DE DATOS (Las Tablas)
+// ==========================================
+
+// Tabla de Usuarios
+model User {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique
+  password  String   // En un entorno real iría encriptado
+  name      String
+  createdAt DateTime @default(now())
+  
+  // Relación: Un usuario puede tener muchos pedidos
+  orders    Order[]
+}
+
+// Tabla de Catálogo (Productos)
+model Product {
+  id          Int         @id @default(autoincrement())
+  name        String
+  description String?
+  price       Float
+  stock       Int         // Vital para controlar el inventario en las compras
+  
+  // Relación: Un producto puede estar en muchos detalles de pedido
+  orderItems  OrderItem[]
+}
+
+// Tabla de Pedidos (Ventas)
+model Order {
+  id         Int         @id @default(autoincrement())
+  total      Float
+  status     String      @default("PENDING") // PENDING, COMPLETED, FAILED
+  createdAt  DateTime    @default(now())
+  
+  // Relaciones
+  userId     Int
+  user       User        @relation(fields: [userId], references: [id])
+  items      OrderItem[]
+}
+
+// Tabla pivote para saber qué productos y cuántos van en cada pedido
+model OrderItem {
+  id        Int     @id @default(autoincrement())
+  quantity  Int
+  price     Float   // Guardamos el precio histórico al momento de la compra
+  
+  // Relaciones
+  orderId   Int
+  order     Order   @relation(fields: [orderId], references: [id])
+  productId Int
+  product   Product @relation(fields: [productId], references: [id])
 }

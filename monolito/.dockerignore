@@ -1,0 +1,17 @@
+# Dependencias y compilaciones locales
+node_modules
+dist
+npm-debug.log
+yarn-error.log
+
+# Archivos de entorno y Git
+.env
+.git
+.gitignore
+
+# Archivos de Docker
+Dockerfile
+.dockerignore
+
+# Documentación
+README.md

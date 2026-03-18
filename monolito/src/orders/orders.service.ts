@@ -1,8 +1,10 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger,BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
 export class OrdersService {
+  private readonly logger = new Logger(OrdersService.name);
+
   constructor(private prisma: PrismaService) {}
 
   /**
@@ -18,66 +20,74 @@ export class OrdersService {
    * @throws {BadRequestException} Si un producto no existe o no hay stock suficiente.
    */
   async createOrder(data: { userId: number; items: { productId: number; quantity: number }[] }) {
-    // Iniciamos una Transacción Interactiva de Prisma
-    return this.prisma.$transaction(async (tx) => {
-      let total = 0;
-      const orderItemsData = [];
+    try {
+      // Iniciamos una Transacción Interactiva de Prisma
+      return this.prisma.$transaction(async (tx) => {
+        this.logger.log(`🛒Creando pedido para usuario ${data.userId}`);
+        let total = 0;
+        const orderItemsData = [];
 
-      // 1. Recorremos cada producto que el cliente quiere comprar
-      for (const item of data.items) {
-        // Buscamos el producto actual dentro de la transacción
-        const product = await tx.product.findUnique({
-          where: { id: item.productId },
-        });
+        // 1. Recorremos cada producto que el cliente quiere comprar
+        for (const item of data.items) {
+          // Buscamos el producto actual dentro de la transacción
+          const product = await tx.product.findUnique({
+            where: { id: item.productId },
+          });
 
-        // Validamos que el producto exista
-        if (!product) {
-          throw new BadRequestException(`El producto con ID ${item.productId} no existe.`);
+          // Validamos que el producto exista
+          if (!product) {
+            throw new BadRequestException(`El producto con ID ${item.productId} no existe.`);
+          }
+
+          // Validamos que haya stock suficiente para el Cyber Wow
+          if (product.stock < item.quantity) {
+            this.logger.error(`❌Stock insuficiente para el producto: ${product.name}. Stock actual: ${product.stock}`);
+            throw new BadRequestException(`Stock insuficiente para el producto: ${product.name}. Stock actual: ${product.stock}`);
+          }
+
+          // 2. Restamos el stock de la base de datos de forma atómica (decrement)
+          await tx.product.update({
+            where: { id: item.productId },
+            data: {
+              stock: {
+                decrement: item.quantity,
+              },
+            },
+          });
+
+          // Sumamos al total del pedido (Precio * Cantidad)
+          total += product.price * item.quantity;
+
+          // Preparamos la data del detalle del pedido guardando el precio histórico
+          orderItemsData.push({
+            productId: item.productId,
+            quantity: item.quantity,
+            price: product.price,
+          });
         }
 
-        // Validamos que haya stock suficiente para el Cyber Wow
-        if (product.stock < item.quantity) {
-          throw new BadRequestException(`Stock insuficiente para el producto: ${product.name}. Stock actual: ${product.stock}`);
-        }
-
-        // 2. Restamos el stock de la base de datos de forma atómica (decrement)
-        await tx.product.update({
-          where: { id: item.productId },
+        // 3. Creamos el ticket final (Order) junto con sus detalles (OrderItems)
+        const order = await tx.order.create({
           data: {
-            stock: {
-              decrement: item.quantity,
+            userId: data.userId,
+            total,
+            status: 'COMPLETED', // Simulamos que el pago ya fue aprobado
+            items: {
+              create: orderItemsData, // Prisma crea los OrderItems aquí
             },
           },
-        });
-
-        // Sumamos al total del pedido (Precio * Cantidad)
-        total += product.price * item.quantity;
-
-        // Preparamos la data del detalle del pedido guardando el precio histórico
-        orderItemsData.push({
-          productId: item.productId,
-          quantity: item.quantity,
-          price: product.price,
-        });
-      }
-
-      // 3. Creamos el ticket final (Order) junto con sus detalles (OrderItems)
-      const order = await tx.order.create({
-        data: {
-          userId: data.userId,
-          total,
-          status: 'COMPLETED', // Simulamos que el pago ya fue aprobado
-          items: {
-            create: orderItemsData, // Prisma crea los OrderItems aquí
+          include: {
+            items: true, // Le decimos que nos devuelva el pedido con sus items incluidos
           },
-        },
-        include: {
-          items: true, // Le decimos que nos devuelva el pedido con sus items incluidos
-        },
-      });
+          });
 
-      return order; // Si todo salió bien, la transacción se ejecuta automáticamente
-    });
+        this.logger.log(`🛒Pedido creado con éxito para usuario ${data.userId}`);
+        return order; // Si todo salió bien, la transacción se ejecuta automáticamente
+      });
+    } catch (error) {
+      this.logger.error(`❌Error al crear el pedido: ${error}`);
+      throw error;
+    }
   }
 
   /**
